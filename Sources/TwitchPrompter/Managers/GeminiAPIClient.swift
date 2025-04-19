@@ -175,8 +175,8 @@ protocol GeminiClientDelegate: AnyObject {
 class GeminiAPIClient {
     weak var delegate: GeminiClientDelegate?
     let apiKey: String
-    // Use the standard Gemini Pro model for now
-    private let restEndpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent"
+    // Use the Gemini Flash model for potentially faster responses
+    private let restEndpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
     
     private var ws: WebSocket?
     private var elg: EventLoopGroup?
