@@ -488,7 +488,8 @@ class GeminiAPIClient {
                 }
                 // Potentially close connection or stop processing based on error type
                  if error.code != nil { // Assume fatal errors have codes? Adjust as needed.
-                     self.ws?.close(code: .internalServerError)
+                     // Use an appropriate WebSocketErrorCode
+                     self.ws?.close(code: .unexpectedServerError)
                  }
                 return // Stop processing this message if it's an error
             }
