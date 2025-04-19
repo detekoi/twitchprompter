@@ -390,114 +390,28 @@ class GeminiAPIClient {
 
     // MARK: - Content Sending (Refactoring Needed)
     
-    private func sendContentMessage(_ parts: [GeminiMessagePart]) {
-        guard isConnected else { return }
-        
-        // Create URL request
-        var urlComponents = URLComponents(string: restEndpoint)
-        urlComponents?.queryItems = [URLQueryItem(name: "key", value: apiKey)]
-        
-        guard let url = urlComponents?.url else {
-            print("Failed to create URL")
-            return
-        }
-        
-        // System prompt
-        let systemPrompt = "You are an assistant providing streamers with live prompts and content ideas based on their stream. Keep your suggestions concise, relevant to what's happening on screen, and engaging for viewers. Respond within 1-2 sentences and make your suggestions helpful for the streamer without being disruptive."
-        
-        // Create request body
-        let requestContent = [
-            "contents": [
-                ["role": "system", "parts": [["text": systemPrompt]]],
-                ["role": "user", "parts": parts.map { part in
-                    var partDict: [String: Any] = [:]
-                    if let text = part.text {
-                        partDict["text"] = text
-                    }
-                    if let inlineData = part.inlineData {
-                        partDict["inlineData"] = [
-                            "mimeType": inlineData.mimeType,
-                            "data": inlineData.data
-                        ]
-                    }
-                    return partDict
-                }]
-            ],
-            "generation_config": [
-                "temperature": 0.4,
-                "topP": 0.95,
-                "topK": 40,
-                "maxOutputTokens": 1024
-            ]
-        ] as [String: Any]
-        
-        // Create request
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        do {
-            // This can throw an error, so we need the try
-            request.httpBody = try JSONSerialization.data(withJSONObject: requestContent)
-            
-            // Create and start data task
-            let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-                guard let self = self else { return }
-                
-                // Print HTTP response info
-                if let httpResponse = response as? HTTPURLResponse {
-                    print("HTTP response status: \(httpResponse.statusCode)")
-                    print("HTTP response headers: \(httpResponse.allHeaderFields)")
-                }
-                
-                // Handle response error
-                if let error = error {
-                    print("API request failed: \(error)")
-                    DispatchQueue.main.async {
-                        self.delegate?.didReceivePrompt("Error from Gemini API: \(error.localizedDescription)")
-                    }
-                    return
-                }
-                
-                guard let data = data else {
-                    print("No data received")
-                    return
-                }
-                
-                // Parse the response
-                if let responseText = String(data: data, encoding: .utf8) {
-                    print("Response: \(responseText.prefix(200))...")
-                    
-                    do {
-                        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-                        
-                        // Extract and process candidate content
-                        if let candidates = json?["candidates"] as? [[String: Any]], 
-                           let firstCandidate = candidates.first,
-                           let content = firstCandidate["content"] as? [String: Any],
-                           let parts = content["parts"] as? [[String: Any]],
-                           let firstPart = parts.first,
-                           let text = firstPart["text"] as? String {
-                            
-                            // Update UI with the response text
-                            DispatchQueue.main.async {
-                                self.delegate?.didReceivePrompt(text)
-                            }
-                        } else {
-                            print("Could not extract text from response: \(responseText)")
-                        }
-                    } catch {
-                        print("Failed to parse JSON: \(error)")
-                    }
-                }
-            }
-            
-            task.resume()
-            
-        } catch let jsonError {
-            // This catch block is for the JSONSerialization.data call
-            print("Failed to create request body: \(jsonError)")
-        }
+    // TODO: Refactor this method to send content over WebSocket using GeminiLiveSendContentMessage
+    private func sendContentMessage(_ parts: [GeminiLiveSendContentMessage.ContentPart.Part]) {
+         guard let websocket = ws, isConnected else {
+             print("Cannot send content, WebSocket not connected.")
+             return
+         }
+
+         let contentPart = GeminiLiveSendContentMessage.ContentPart(parts: parts)
+         let message = GeminiLiveSendContentMessage(content: contentPart)
+
+         do {
+             let encoder = JSONEncoder()
+             let data = try encoder.encode(message)
+             if let jsonString = String(data: data, encoding: .utf8) {
+                 print("Sending Content Message: \(jsonString.prefix(200))...")
+                 websocket.send(jsonString)
+             } else {
+                 print("Error: Could not convert content message to JSON string")
+             }
+         } catch {
+             print("Error encoding content message: \(error)")
+         }
     }
     
     // MARK: - Public Methods
