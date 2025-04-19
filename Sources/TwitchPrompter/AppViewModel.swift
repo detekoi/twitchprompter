@@ -131,18 +131,18 @@ extension AppViewModel: GeminiClientDelegate {
             messageHistory.removeLast()
         }
         
-        // Add to cumulative text with separator
+        // Add to cumulative text as continuous flow
         if !cumulativeText.isEmpty {
-            cumulativeText += "\n\n• \(processedPrompt)"
+            cumulativeText += " \(processedPrompt)"
         } else {
-            cumulativeText = "• \(processedPrompt)"
+            cumulativeText = processedPrompt
         }
         
         // Keep cumulative text at a reasonable size
         if cumulativeText.count > maxCumulativeLength {
-            // Find a good separation point to trim from the beginning
-            if let rangeOfNewline = cumulativeText.range(of: "\n\n", options: .backwards, range: cumulativeText.startIndex..<cumulativeText.index(cumulativeText.endIndex, offsetBy: -maxCumulativeLength/2)) {
-                cumulativeText.removeSubrange(cumulativeText.startIndex..<rangeOfNewline.upperBound)
+            // Try to find a sentence boundary to trim from
+            if let rangePeriod = cumulativeText.range(of: ". ", options: .backwards, range: cumulativeText.startIndex..<cumulativeText.index(cumulativeText.endIndex, offsetBy: -maxCumulativeLength/2)) {
+                cumulativeText.removeSubrange(cumulativeText.startIndex..<rangePeriod.upperBound)
             } else {
                 // Fallback if no good break point found
                 cumulativeText = String(cumulativeText.suffix(maxCumulativeLength))

@@ -72,15 +72,17 @@ struct PromptView: View {
                 // Cumulative text display
                 ScrollViewReader { scrollView in
                     ScrollView {
+                        // Setup text view for continuous scrolling text
                         Text(viewModel.cumulativeText)
                             .font(.body)
+                            .lineSpacing(4) // Add slight line spacing for readability
                             .padding()
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .id("cumulativeText")
                             .onChange(of: viewModel.cumulativeText) { _ in
                                 // Auto-scroll to bottom when content changes
                                 withAnimation {
-                                    scrollView.scrollTo("cumulativeText", anchor: .bottom)
+                                    scrollView.scrollTo("cumulativeText", anchor: .bottomTrailing)
                                 }
                             }
                     }
@@ -91,7 +93,7 @@ struct PromptView: View {
                         // Scroll to bottom when view appears
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                             withAnimation {
-                                scrollView.scrollTo("cumulativeText", anchor: .bottom)
+                                scrollView.scrollTo("cumulativeText", anchor: .bottomTrailing)
                             }
                         }
                     }
