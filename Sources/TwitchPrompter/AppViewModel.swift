@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import Foundation
 
 @MainActor
 class AppViewModel: ObservableObject {
@@ -15,7 +16,9 @@ class AppViewModel: ObservableObject {
     @Published var isStreaming: Bool = false
     @Published var currentPrompt: String = "No prompt yet"
     @Published var messageHistory: [String] = []
+    @Published var cumulativeText: String = ""
     private let maxHistoryItems = 10
+    private let maxCumulativeLength = 2000 // Limit total cumulative text length
 
     private var screenCaptureManager: ScreenCaptureManager?
     private var audioCaptureManager: AudioCaptureManager?
@@ -109,20 +112,70 @@ extension AppViewModel: ChatMessageDelegate {
 
 extension AppViewModel: GeminiClientDelegate {
     func didReceivePrompt(_ prompt: String) {
-        // Update the current prompt
-        currentPrompt = prompt
+        // Process the prompt for better readability
+        let processedPrompt = formatPromptForDisplay(prompt)
+        
+        // Update the current prompt for single-prompt display
+        currentPrompt = processedPrompt
         
         // Add to message history with timestamp
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "HH:mm:ss"
         let timestamp = dateFormatter.string(from: Date())
         
-        let formattedMessage = "[\(timestamp)] \(prompt)"
+        let formattedMessage = "[\(timestamp)] \(processedPrompt)"
         messageHistory.insert(formattedMessage, at: 0)
         
         // Keep history at a reasonable size
         if messageHistory.count > maxHistoryItems {
             messageHistory.removeLast()
         }
+        
+        // Add to cumulative text with separator
+        if !cumulativeText.isEmpty {
+            cumulativeText += "\n\n• \(processedPrompt)"
+        } else {
+            cumulativeText = "• \(processedPrompt)"
+        }
+        
+        // Keep cumulative text at a reasonable size
+        if cumulativeText.count > maxCumulativeLength {
+            // Find a good separation point to trim from the beginning
+            if let rangeOfNewline = cumulativeText.range(of: "\n\n", options: .backwards, range: cumulativeText.startIndex..<cumulativeText.index(cumulativeText.endIndex, offsetBy: -maxCumulativeLength/2)) {
+                cumulativeText.removeSubrange(cumulativeText.startIndex..<rangeOfNewline.upperBound)
+            } else {
+                // Fallback if no good break point found
+                cumulativeText = String(cumulativeText.suffix(maxCumulativeLength))
+            }
+        }
+    }
+    
+    // Helper function to format prompts for better readability
+    private func formatPromptForDisplay(_ prompt: String) -> String {
+        // First, clean up any potential newlines or excessive spaces
+        var cleanedPrompt = prompt.replacingOccurrences(of: "\n", with: " ")
+        while cleanedPrompt.contains("  ") {
+            cleanedPrompt = cleanedPrompt.replacingOccurrences(of: "  ", with: " ")
+        }
+        
+        // Break at sentence boundaries
+        let sentences = cleanedPrompt.components(separatedBy: ". ")
+        let formattedSentences = sentences.map { $0.trimmingCharacters(in: .whitespaces) }
+        
+        // Join with period and space, ensuring proper sentence formatting
+        let formatted = formattedSentences.enumerated().map { index, sentence in
+            // Check if sentence already ends with punctuation
+            let hasPunctuation = sentence.last?.isPunctuation ?? false
+            // Don't add period if it's the last sentence and it already has punctuation
+            if index == sentences.count - 1 && hasPunctuation {
+                return sentence
+            } else if index == sentences.count - 1 {
+                return "\(sentence)"
+            } else {
+                return "\(sentence)."
+            }
+        }.joined(separator: " ")
+        
+        return formatted
     }
 }
