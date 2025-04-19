@@ -176,9 +176,9 @@ protocol GeminiClientDelegate: AnyObject {
 class GeminiAPIClient {
     weak var delegate: GeminiClientDelegate?
     let apiKey: String
-    // Live API uses WebSockets, not a simple REST endpoint
-    // Trying v1beta based on REST API patterns, as v1alpha resulted in 404
-    private let liveAPIEndpoint = "wss://generativelanguage.googleapis.com/v1beta/live"
+    // Live API uses WebSockets. Trying a path structure similar to REST API.
+    // Using :streamGenerateContent as a guess for the streaming method.
+    private let liveAPIEndpoint = "wss://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-live-001:streamGenerateContent"
 
     private var ws: WebSocket?
     private var elg: EventLoopGroup? = MultiThreadedEventLoopGroup.singleton // Use shared group
