@@ -175,15 +175,9 @@ protocol GeminiClientDelegate: AnyObject {
 
 class GeminiAPIClient {
     weak var delegate: GeminiClientDelegate?
-    let apiKey: String // Keep API key for now, but Vertex AI usually uses ADC.
-    // Switching to Vertex AI endpoint structure based on documentation.
-    private let vertexRegion = "us-central1"
-    private let vertexProjectID = "ai-social-prompter"
-    private var liveAPIEndpoint: String {
-        // Note: Vertex AI uses v1beta1 for this API according to Python SDK example
-        // Note: Model ID might need adjustment (e.g., gemini-2.0-flash-live-preview-04-09)
-        "wss://\(vertexRegion)-aiplatform.googleapis.com/v1beta1/projects/\(vertexProjectID)/locations/\(vertexRegion)/publishers/google/models/gemini-2.0-flash-live-001:streamGenerateContent"
-    }
+    let apiKey: String
+    // Using the specific WebSocket endpoint from the Google AI Live API documentation
+    private let liveAPIEndpoint = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 
     private var ws: WebSocket?
     private var elg: EventLoopGroup? = MultiThreadedEventLoopGroup.singleton // Use shared group
@@ -221,11 +215,11 @@ class GeminiAPIClient {
 
         // Create a new session ID
         sessionId = UUID().uuidString
-        // Construct Vertex AI URL - Authentication is typically handled by gcloud ADC or service account, not API key in URL
-        let wsURLString = liveAPIEndpoint
+        // Construct Google AI Live API URL with API key
+        let wsURLString = "\(liveAPIEndpoint)?key=\(apiKey)"
 
         guard let wsURL = URL(string: wsURLString) else {
-            print("Error: Invalid WebSocket URL (Vertex AI): \(wsURLString)")
+            print("Error: Invalid WebSocket URL (Google AI Live): \(wsURLString)")
             DispatchQueue.main.async { [weak self] in
                 self?.delegate?.didReceivePrompt("Error: Invalid API endpoint configuration.")
             }
