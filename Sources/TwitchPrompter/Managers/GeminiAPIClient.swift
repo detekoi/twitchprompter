@@ -173,11 +173,10 @@ struct GeminiLiveFinalMetricsMessage: Codable {
     struct Metrics: Codable {
         let totalTokenCount: Int
         let promptTokenCount: Int
-            let audioEncoding: String
-            
-            init(sampleRateHz: Int) {
-                self.sampleRateHz = sampleRateHz
-                self.audioEncoding = "linear16"
+        // TODO: Add other relevant metric fields based on actual API response if needed
+    }
+} // Close GeminiLiveFinalMetricsMessage struct
+
 // MARK: - Delegate Protocol
 
 // Require conforming types to adopt the MainActor global actor
