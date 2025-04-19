@@ -180,8 +180,8 @@ struct GeminiLiveFinalMetricsMessage: Codable {
                 self.audioEncoding = "linear16"
 // MARK: - Delegate Protocol
 
-@MainActor
-protocol GeminiClientDelegate: AnyObject {
+// Require conforming types to adopt the MainActor global actor
+protocol GeminiClientDelegate: AnyObject, MainActor {
     func didReceivePrompt(_ prompt: String)
 }
 
