@@ -14,6 +14,8 @@ class AppViewModel: ObservableObject {
 
     @Published var isStreaming: Bool = false
     @Published var currentPrompt: String = "No prompt yet"
+    @Published var messageHistory: [String] = []
+    private let maxHistoryItems = 10
 
     private var screenCaptureManager: ScreenCaptureManager?
     private var audioCaptureManager: AudioCaptureManager?
@@ -107,6 +109,20 @@ extension AppViewModel: ChatMessageDelegate {
 
 extension AppViewModel: GeminiClientDelegate {
     func didReceivePrompt(_ prompt: String) {
+        // Update the current prompt
         currentPrompt = prompt
+        
+        // Add to message history with timestamp
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "HH:mm:ss"
+        let timestamp = dateFormatter.string(from: Date())
+        
+        let formattedMessage = "[\(timestamp)] \(prompt)"
+        messageHistory.insert(formattedMessage, at: 0)
+        
+        // Keep history at a reasonable size
+        if messageHistory.count > maxHistoryItems {
+            messageHistory.removeLast()
+        }
     }
 }
