@@ -177,7 +177,8 @@ class GeminiAPIClient {
     weak var delegate: GeminiClientDelegate?
     let apiKey: String
     // Live API uses WebSockets, not a simple REST endpoint
-    private let liveAPIEndpoint = "wss://generativelanguage.googleapis.com/v1alpha/live"
+    // Trying v1beta based on REST API patterns, as v1alpha resulted in 404
+    private let liveAPIEndpoint = "wss://generativelanguage.googleapis.com/v1beta/live"
 
     private var ws: WebSocket?
     private var elg: EventLoopGroup? = MultiThreadedEventLoopGroup.singleton // Use shared group
