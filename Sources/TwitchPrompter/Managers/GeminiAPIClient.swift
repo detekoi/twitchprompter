@@ -16,20 +16,21 @@ enum GeminiLiveMessageType: String, Codable {
 
 /// Message to initialize a Live API session
 struct GeminiLiveStartMessage: Codable {
-    let type: String
+    let type: String = GeminiLiveMessageType.start.rawValue
     let session: SessionConfig
     
     init(session: SessionConfig) {
-        self.type = GeminiLiveMessageType.start.rawValue
         self.session = session
     }
     
     struct SessionConfig: Codable {
         let id: String
-        let model: String
+        let model: String = "gemini-2.0-flash-live-001" // Use the Live API model
         let system: String?
         let audioConfig: AudioConfig?
-        
+        // Add response modalities if needed, e.g., ["TEXT", "AUDIO"]
+        let responseModalities: [String]? = ["TEXT"] // Example: Request text responses
+
         struct AudioConfig: Codable {
             let sampleRateHz: Int
             let audioEncoding: String
@@ -175,11 +176,11 @@ protocol GeminiClientDelegate: AnyObject {
 class GeminiAPIClient {
     weak var delegate: GeminiClientDelegate?
     let apiKey: String
-    // Use the Gemini Flash model for potentially faster responses
-    private let restEndpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
-    
+    // Live API uses WebSockets, not a simple REST endpoint
+    private let liveAPIEndpoint = "wss://generativelanguage.googleapis.com/v1alpha/live"
+
     private var ws: WebSocket?
-    private var elg: EventLoopGroup?
+    private var elg: EventLoopGroup? = MultiThreadedEventLoopGroup.singleton // Use shared group
     private var isConnected = false
     private var sessionId = UUID().uuidString
     private var contentBuffer = [String]()
@@ -201,19 +202,70 @@ class GeminiAPIClient {
     func connect() {
         guard !isConnected else { return }
         
+        // Ensure EventLoopGroup exists
+        guard let eventLoopGroup = MultiThreadedEventLoopGroup.singleton as? EventLoopGroup else {
+             print("Error: Could not get EventLoopGroup singleton.")
+             // Handle error appropriately, maybe notify delegate
+             DispatchQueue.main.async { [weak self] in
+                 self?.delegate?.didReceivePrompt("Error: Could not initialize connection.")
+             }
+             return
+         }
+        self.elg = eventLoopGroup
+
         // Create a new session ID
         sessionId = UUID().uuidString
-        
-        // Using HTTP request for streaming instead of direct WebSocket
-        self.isConnected = true
-        
-        // Notify successful connection
-        DispatchQueue.main.async { [weak self] in
-            self?.delegate?.didReceivePrompt("Connected to Gemini API")
+        let wsURLString = "\(liveAPIEndpoint)?key=\(apiKey)" // Append API key
+
+        guard let wsURL = URL(string: wsURLString) else {
+            print("Error: Invalid WebSocket URL: \(wsURLString)")
+            DispatchQueue.main.async { [weak self] in
+                self?.delegate?.didReceivePrompt("Error: Invalid API endpoint configuration.")
+            }
+            return
         }
-        
-        // Start the processing timer for frames
-        startProcessingTimer()
+
+        print("Connecting to WebSocket: \(wsURLString)")
+
+        // Initiate WebSocket connection
+        let connectionFuture = WebSocket.connect(to: wsURL, on: eventLoopGroup) { [weak self] websocket in
+            guard let self = self else { return }
+            self.ws = websocket
+            self.isConnected = true
+            print("WebSocket connected successfully.")
+
+            // Send the start message
+            self.sendStartMessage()
+
+            // Set up message handling
+            websocket.onText { ws, text in
+                self.handleIncomingMessage(text)
+            }
+
+            // Set up close handling
+            websocket.onClose.whenComplete { [weak self] result in
+                self?.handleWebSocketClose(result: result)
+            }
+            
+            // Notify successful connection
+             DispatchQueue.main.async { [weak self] in
+                 self?.delegate?.didReceivePrompt("Connected to Gemini Live API")
+             }
+
+            // Start the processing timer for frames (if needed for Live API)
+            // Consider if frame processing logic needs adjustment for WebSocket streaming
+            self.startProcessingTimer()
+        }
+
+        // Handle connection errors
+        connectionFuture.whenFailure { [weak self] error in
+            print("WebSocket connection failed: \(error)")
+            self?.isConnected = false
+            // Notify delegate about the failure
+            DispatchQueue.main.async { [weak self] in
+                self?.delegate?.didReceivePrompt("Error connecting to Gemini Live API: \(error.localizedDescription)")
+            }
+        }
     }
     
     func disconnect() {
@@ -241,10 +293,102 @@ class GeminiAPIClient {
         processingTimer?.invalidate()
         processingTimer = nil
     }
-    
-    // MARK: - Session Initialization
-    
-    // MARK: - Content Sending
+    // MARK: - WebSocket Message Handling
+
+    private func sendStartMessage() {
+        guard let websocket = ws else { return }
+
+        // System prompt - Define it here or pass it during init
+        let systemPrompt = "You are an assistant providing streamers with live prompts and content ideas based on their stream. Keep your suggestions concise, relevant to what's happening on screen, and engaging for viewers. Respond within 1-2 sentences and make your suggestions helpful for the streamer without being disruptive."
+
+        let sessionConfig = GeminiLiveStartMessage.SessionConfig(
+            id: sessionId,
+            // model is set by default in the struct definition
+            system: systemPrompt,
+            audioConfig: nil // Add audio config if needed, e.g., .init(sampleRateHz: 16000)
+            // responseModalities is set by default
+        )
+        let startMessage = GeminiLiveStartMessage(session: sessionConfig)
+
+        do {
+            let encoder = JSONEncoder()
+            let data = try encoder.encode(startMessage)
+            if let jsonString = String(data: data, encoding: .utf8) {
+                 print("Sending Start Message: \(jsonString)")
+                 websocket.send(jsonString)
+            } else {
+                 print("Error: Could not convert start message to JSON string")
+            }
+        } catch {
+            print("Error encoding start message: \(error)")
+        }
+    }
+
+    private func handleIncomingMessage(_ text: String) {
+        print("Received WebSocket message: \(text.prefix(200))...")
+        // TODO: Decode the message based on its 'type' field (receiveContent, heartbeat, error, etc.)
+        // and call appropriate delegate methods or update internal state.
+        // Example structure:
+        /*
+        guard let data = text.data(using: .utf8) else { return }
+        do {
+            let decoder = JSONDecoder()
+            // Try decoding different message types based on a common field like 'type'
+            if let genericMessage = try? decoder.decode([String: String].self, from: data),
+               let typeString = genericMessage["type"],
+               let type = GeminiLiveMessageType(rawValue: typeString) {
+
+                switch type {
+                case .receiveContent:
+                    let message = try decoder.decode(GeminiLiveReceiveContentMessage.self, from: data)
+                    // Process message.content or message.error
+                    if let content = message.content, let text = content.parts.first?.text {
+                         DispatchQueue.main.async { [weak self] in
+                             self?.delegate?.didReceivePrompt(text)
+                         }
+                    } else if let error = message.error {
+                         print("Received Live API Error: \(error.code) - \(error.message)")
+                         DispatchQueue.main.async { [weak self] in
+                             self?.delegate?.didReceivePrompt("Live API Error: \(error.message)")
+                         }
+                    }
+                case .heartbeat:
+                    // Handle heartbeat if necessary (e.g., respond if required by API)
+                    print("Received Heartbeat")
+                case .finalMetrics:
+                    let message = try decoder.decode(GeminiLiveFinalMetricsMessage.self, from: data)
+                    print("Received Final Metrics: \(message.metrics)")
+                case .error:
+                     // This might overlap with receiveContent.error, check API spec
+                     print("Received explicit Error message type")
+                default:
+                    print("Received unhandled message type: \(typeString)")
+                }
+            } else {
+                 print("Could not decode message type from: \(text)")
+            }
+        } catch {
+            print("Error decoding incoming message: \(error)")
+        }
+        */
+         // Placeholder: Forward raw message for now
+         DispatchQueue.main.async { [weak self] in
+             self?.delegate?.didReceivePrompt("Raw WS: \(text.prefix(100))")
+         }
+    }
+
+    private func handleWebSocketClose(result: Result<Void, Error>) {
+         print("WebSocket connection closed: \(result)")
+         isConnected = false
+         ws = nil
+         stopProcessingTimer() // Stop processing frames on disconnect
+         // Optionally attempt reconnection or notify delegate
+         DispatchQueue.main.async { [weak self] in
+             self?.delegate?.didReceivePrompt("Disconnected from Gemini Live API")
+         }
+    }
+
+    // MARK: - Content Sending (Refactoring Needed)
     
     private func sendContentMessage(_ parts: [GeminiMessagePart]) {
         guard isConnected else { return }
@@ -369,29 +513,36 @@ class GeminiAPIClient {
     private func processPendingFrames() {
         processingQueue.async { [weak self] in
             guard let self = self, !self.pendingFrames.isEmpty, self.isConnected else { return }
-            
             // Take the most recent frame
             if let latestFrame = self.pendingFrames.last {
-                // Send just the latest frame to avoid overwhelming the API
-                let part = GeminiMessagePart(data: latestFrame, mimeType: "image/jpeg")
+                // Send just the latest frame using the Live API structure
+                // Note: GeminiMessagePart is for REST, need GeminiLiveSendContentMessage.ContentPart.Part
+                let part = GeminiLiveSendContentMessage.ContentPart.Part(imageData: latestFrame)
                 self.sendContentMessage([part])
             }
-            
             // Clear pending frames
             self.pendingFrames.removeAll()
         }
     }
     
     func sendAudio(_ data: Data) {
-        // Process audio data - ensure it's 16kHz 16-bit PCM
-        // Note: Audio not fully supported in the standard API
-        let chatMessage = GeminiMessagePart(text: "[Audio input received]")
-        sendContentMessage([chatMessage])
+        // Process audio data - ensure it's 16kHz 16-bit PCM for Live API
+        // Send using the Live API structure
+        // Note: GeminiMessagePart is for REST, need GeminiLiveSendContentMessage.ContentPart.Part
+        // Ensure responseModalities in SessionConfig includes "AUDIO" if you expect audio back
+        // Ensure audioConfig in SessionConfig is set if sending audio
+        let part = GeminiLiveSendContentMessage.ContentPart.Part(audioData: data)
+        sendContentMessage([part])
+        // Also consider sending a text part if needed, e.g.,
+        // let textPart = GeminiLiveSendContentMessage.ContentPart.Part(text: "[Sending audio chunk]")
+        // sendContentMessage([part, textPart])
     }
     
     func sendChatMessage(_ username: String, _ message: String) {
         let chatText = "\(username): \(message)"
-        let part = GeminiMessagePart(text: "Chat message: \(chatText)")
+        // Send using the Live API structure
+        // Note: GeminiMessagePart is for REST, need GeminiLiveSendContentMessage.ContentPart.Part
+        let part = GeminiLiveSendContentMessage.ContentPart.Part(text: "Chat message: \(chatText)")
         sendContentMessage([part])
     }
 }
