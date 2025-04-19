@@ -175,10 +175,16 @@ protocol GeminiClientDelegate: AnyObject {
 
 class GeminiAPIClient {
     weak var delegate: GeminiClientDelegate?
-    let apiKey: String
-    // Live API uses WebSockets. Trying a path structure similar to REST API.
-    // Using :streamGenerateContent as a guess for the streaming method.
-    private let liveAPIEndpoint = "wss://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-live-001:streamGenerateContent"
+    let apiKey: String // Keep API key for now, but Vertex AI usually uses ADC.
+    // Switching to Vertex AI endpoint structure based on documentation.
+    // Replace YOUR_PROJECT_ID and YOUR_REGION with actual values.
+    private let vertexRegion = "YOUR_REGION" // e.g., "us-central1"
+    private let vertexProjectID = "YOUR_PROJECT_ID"
+    private var liveAPIEndpoint: String {
+        // Note: Vertex AI uses v1beta1 for this API according to Python SDK example
+        // Note: Model ID might need adjustment (e.g., gemini-2.0-flash-live-preview-04-09)
+        "wss://\(vertexRegion)-aiplatform.googleapis.com/v1beta1/projects/\(vertexProjectID)/locations/\(vertexRegion)/publishers/google/models/gemini-2.0-flash-live-001:streamGenerateContent"
+    }
 
     private var ws: WebSocket?
     private var elg: EventLoopGroup? = MultiThreadedEventLoopGroup.singleton // Use shared group
@@ -216,10 +222,11 @@ class GeminiAPIClient {
 
         // Create a new session ID
         sessionId = UUID().uuidString
-        let wsURLString = "\(liveAPIEndpoint)?key=\(apiKey)" // Append API key
+        // Construct Vertex AI URL - Authentication is typically handled by gcloud ADC or service account, not API key in URL
+        let wsURLString = liveAPIEndpoint
 
         guard let wsURL = URL(string: wsURLString) else {
-            print("Error: Invalid WebSocket URL: \(wsURLString)")
+            print("Error: Invalid WebSocket URL (Vertex AI): \(wsURLString)")
             DispatchQueue.main.async { [weak self] in
                 self?.delegate?.didReceivePrompt("Error: Invalid API endpoint configuration.")
             }
