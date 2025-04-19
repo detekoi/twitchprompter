@@ -12,6 +12,8 @@ enum GeminiLiveMessageType: String, Codable {
     case heartbeat = "heartbeat"
     case finalMetrics = "finalMetrics"
     case error = "error"
+} // Close GeminiLiveMessageType enum
+
 // MARK: - API Message Structs (Matching Live API Spec)
 
 /// Wrapper to ensure only one top-level key per client message
