@@ -321,7 +321,7 @@ class GeminiAPIClient {
 
 
         // Create the BidiGenerateContentSetup message
-        let modelName = "models/gemini-2.0-flash-live-001" // Use the format specified in API docs
+        let modelName = "models/gemini-2.0-flash-live-preview-04-09" // Use the model specified in Live API docs
         let systemInstruction = BidiGenerateContentSetup.Content(parts: [BidiGenerateContentSetup.Part(text: systemPrompt)])
         let generationConfig = BidiGenerateContentSetup.GenerationConfig(responseModalities: ["TEXT"]) // Match old config
 
@@ -416,7 +416,11 @@ class GeminiAPIClient {
 
     // MARK: - Content Sending
 
-    private func sendContentMessage(_ parts: [BidiGenerateContentClientContent.Part]) {
+    /// Sends content parts to the Gemini API.
+    /// - Parameters:
+    ///   - parts: The content parts to send.
+    ///   - turnComplete: Whether this message completes the user's turn and expects a response. Defaults to `false`.
+    private func sendContentMessage(_ parts: [BidiGenerateContentClientContent.Part], turnComplete: Bool = false) {
          guard let websocket = ws, isConnected else {
              print("Cannot send content, WebSocket not connected.")
              return
@@ -424,8 +428,8 @@ class GeminiAPIClient {
 
          // Create the BidiGenerateContentClientContent message
          let turn = BidiGenerateContentClientContent.Turn(role: "user", parts: parts)
-         // Set turnComplete to true to signal the model should respond now
-         let clientContentPayload = BidiGenerateContentClientContent(turns: [turn], turnComplete: true)
+         // Set turnComplete based on the parameter. false for streaming, true when expecting a reply.
+         let clientContentPayload = BidiGenerateContentClientContent(turns: [turn], turnComplete: turnComplete)
 
          // Wrap the clientContent payload
          let messageToSend = ClientMessageWrapper(clientContent: clientContentPayload)
@@ -459,12 +463,14 @@ class GeminiAPIClient {
         processingQueue.async { [weak self] in
             guard let self = self, !self.pendingFrames.isEmpty, self.isConnected else { return }
             // Take the most recent frame
+            // Take the most recent frame
             if let latestFrame = self.pendingFrames.last {
                 // Use the new BidiGenerateContentClientContent.Part structure
                 let part = BidiGenerateContentClientContent.Part(imageData: latestFrame)
-                self.sendContentMessage([part])
+                // Send video frame data without marking the turn as complete
+                self.sendContentMessage([part], turnComplete: false)
             }
-            // Clear pending frames
+            // Clear pending frames after processing
             self.pendingFrames.removeAll()
         }
     }
@@ -476,16 +482,18 @@ class GeminiAPIClient {
         // Ensure responseModalities in GenerationConfig includes "AUDIO" if you expect audio back
         // Ensure audioConfig in GenerationConfig is set if sending audio (Need to add AudioConfig to BidiGenerateContentSetup.GenerationConfig if needed)
         let part = BidiGenerateContentClientContent.Part(audioData: data)
-        sendContentMessage([part])
+        // Send audio data without marking the turn as complete
+        sendContentMessage([part], turnComplete: false)
         // Also consider sending a text part if needed, e.g.,
-        // let textPart = GeminiLiveSendContentMessage.ContentPart.Part(text: "[Sending audio chunk]")
-        // sendContentMessage([part, textPart])
+        // let textPart = BidiGenerateContentClientContent.Part(text: "[Sending audio chunk]")
+        // sendContentMessage([part, textPart], turnComplete: false) // Still false if just accompanying audio
     }
     
     func sendChatMessage(_ username: String, _ message: String) {
         let chatText = "\(username): \(message)"
         // Use the new BidiGenerateContentClientContent.Part structure
         let part = BidiGenerateContentClientContent.Part(text: "Chat message: \(chatText)")
-        sendContentMessage([part])
+        // Send chat message and mark the turn as complete to get a response
+        sendContentMessage([part], turnComplete: true)
     }
 }
