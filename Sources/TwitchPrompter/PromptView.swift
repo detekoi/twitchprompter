@@ -2,104 +2,46 @@ import SwiftUI
 
 struct PromptView: View {
     @EnvironmentObject var viewModel: AppViewModel
-    @State private var animate = false
+    @State private var animate = false // Keep for potential future use or remove if unused
     @State private var showHistory = false
     @State private var isExpanded: [String: Bool] = [:]
-    @State private var viewMode: ViewMode = .cumulativeText
-    
-    enum ViewMode {
-        case currentPrompt
-        case cumulativeText
-    }
-    
+    // Removed viewMode state and enum
+
     var body: some View {
         VStack(spacing: 15) {
-            // View mode toggle
-            Picker("Display Mode", selection: $viewMode) {
-                Text("Latest").tag(ViewMode.currentPrompt)
-                Text("All Responses").tag(ViewMode.cumulativeText)
-            }
-            .pickerStyle(SegmentedPickerStyle())
-            .padding(.horizontal)
-            
-            // Fixed height prompt container
-            if viewMode == .currentPrompt {
-                // Single latest prompt display
-                VStack {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        ScrollViewReader { scrollView in
-                            HStack(spacing: 0) {
-                                Text(viewModel.currentPrompt)
-                                    .id("promptText")
-                                    .font(.title3)
-                                    .fontWeight(.bold)
-                                    .lineLimit(3)
-                                    .padding()
-                                    .fixedSize(horizontal: true, vertical: false)
-                                    .onChange(of: viewModel.currentPrompt) { _ in
-                                        // Highlight and animate the text when it changes
-                                        withAnimation(.easeIn(duration: 0.3)) {
-                                            animate = true
-                                        }
-                                        
-                                        // Reset scroll position to beginning
-                                        scrollView.scrollTo("promptText", anchor: .leading)
-                                        
-                                        // After a brief delay, start auto-scrolling
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                                            // Fade highlight
-                                            withAnimation(.easeOut(duration: 0.3)) {
-                                                animate = false
-                                            }
-                                            
-                                            // Automatically scroll to end with smooth animation
-                                            withAnimation(.linear(duration: Double(viewModel.currentPrompt.count) / 15)) {
-                                                scrollView.scrollTo("promptText", anchor: .trailing)
-                                            }
-                                        }
-                                    }
-                            }
-                            .frame(minHeight: 80)
-                        }
-                    }
-                    .frame(height: 100)
-                    .background(Color.blue.opacity(0.1))
-                    .cornerRadius(10)
-                    .opacity(animate ? 1 : 0.8)
-                }
-                .frame(height: 120)
-            } else {
-                // Cumulative text display
-                ScrollViewReader { scrollView in
-                    ScrollView {
-                        // Setup text view for continuous scrolling text
-                        Text(viewModel.cumulativeText)
-                            .font(.body)
-                            .lineSpacing(4) // Add slight line spacing for readability
-                            .padding()
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .id("cumulativeText")
-                            .onChange(of: viewModel.cumulativeText) { _ in
-                                // Auto-scroll to bottom when content changes
-                                withAnimation {
-                                    scrollView.scrollTo("cumulativeText", anchor: .bottomTrailing)
-                                }
-                            }
-                    }
-                    .frame(height: 180)
-                    .background(Color.blue.opacity(0.05))
-                    .cornerRadius(10)
-                    .onAppear {
-                        // Scroll to bottom when view appears
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            // Removed Picker
+
+            // Display cumulative text with larger font and auto-scroll
+            ScrollViewReader { scrollView in
+                ScrollView {
+                    // Setup text view for continuous scrolling text
+                    Text(viewModel.cumulativeText)
+                        .font(.title3) // Use larger font
+                        .fontWeight(.bold) // Use bold weight
+                        .lineSpacing(4) // Keep line spacing
+                        .padding()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .id("cumulativeText")
+                        .onChange(of: viewModel.cumulativeText) { _ in
+                            // Auto-scroll to bottom when content changes
                             withAnimation {
                                 scrollView.scrollTo("cumulativeText", anchor: .bottomTrailing)
                             }
                         }
+                }
+                .frame(height: 180) // Keep fixed height or adjust as needed
+                .background(Color.blue.opacity(0.05)) // Keep background style
+                .cornerRadius(10) // Keep corner radius
+                .onAppear {
+                    // Scroll to bottom when view appears
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        withAnimation {
+                            scrollView.scrollTo("cumulativeText", anchor: .bottomTrailing)
+                        }
                     }
                 }
             }
-            
+
             // Toggle for showing message history
             Button(action: {
                 withAnimation {
