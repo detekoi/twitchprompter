@@ -181,10 +181,11 @@ struct GeminiLiveFinalMetricsMessage: Codable {
 
 // MARK: - Delegate Protocol
 
-// Require conforming types to adopt the MainActor global actor
-protocol GeminiClientDelegate: AnyObject, MainActor {
-    // Explicitly mark the requirement as needing the MainActor
-    @MainActor func didReceivePrompt(_ prompt: String)
+/// Delegate for receiving prompts from the Gemini Live API; methods are invoked on the main actor.
+@MainActor
+protocol GeminiClientDelegate: AnyObject {
+    /// Called when the Gemini API returns a new prompt.
+    func didReceivePrompt(_ prompt: String)
 }
 
 // MARK: - Client Implementation
@@ -318,13 +319,6 @@ class GeminiAPIClient {
         // System prompt - Define it here or pass it during init
         let systemPrompt = "You are an assistant providing streamers with live prompts and content ideas based on their stream. Keep your suggestions concise, relevant to what's happening on screen, and engaging for viewers. Respond within 1-2 sentences and make your suggestions helpful for the streamer without being disruptive."
 
-        let sessionConfig = GeminiLiveStartMessage.SessionConfig(
-            id: sessionId,
-            // model is set by default in the struct definition
-            system: systemPrompt,
-            audioConfig: nil // Add audio config if needed, e.g., .init(sampleRateHz: 16000)
-            // responseModalities is set by default in the old struct, define explicitly here
-        )
 
         // Create the BidiGenerateContentSetup message
         let modelName = "models/gemini-2.0-flash-live-001" // Use the format specified in API docs
