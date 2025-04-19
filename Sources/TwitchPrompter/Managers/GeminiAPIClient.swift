@@ -183,7 +183,8 @@ struct GeminiLiveFinalMetricsMessage: Codable {
 
 // Require conforming types to adopt the MainActor global actor
 protocol GeminiClientDelegate: AnyObject, MainActor {
-    func didReceivePrompt(_ prompt: String)
+    // Explicitly mark the requirement as needing the MainActor
+    @MainActor func didReceivePrompt(_ prompt: String)
 }
 
 // MARK: - Client Implementation
