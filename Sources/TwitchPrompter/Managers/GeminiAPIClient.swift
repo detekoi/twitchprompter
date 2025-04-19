@@ -179,6 +179,77 @@ struct GeminiLiveFinalMetricsMessage: Codable {
     }
 } // Close GeminiLiveFinalMetricsMessage struct
 
+
+// MARK: - Server Message Structures (Based on Live API Spec Inference)
+
+/// Represents a message received from the server. Uses specific fields to determine message type.
+struct BidiGenerateContentServerMessage: Decodable {
+    let setupComplete: SetupComplete?
+    let serverContent: ServerContent?
+    // let toolCall: ToolCall? // Define if using tools
+    // let toolCallCancellation: ToolCallCancellation? // Define if using tools
+    let usageMetadata: UsageMetadata? // Corresponds to old FinalMetrics
+    let goAway: GoAway?
+    // let sessionResumptionUpdate: SessionResumptionUpdate? // Define if using session resumption
+    let error: GeminiError? // General error structure
+
+    // Check for specific error structure within serverContent as well
+    var effectiveError: GeminiError? {
+        return self.error ?? self.serverContent?.error
+    }
+}
+
+struct SetupComplete: Decodable {
+    // Contains confirmation details, potentially session ID etc.
+    // For now, its presence indicates successful setup.
+}
+
+struct ServerContent: Decodable {
+    let modelTurn: ModelTurn?
+    // let inputTranscription: Transcription? // If requested
+    // let outputTranscription: Transcription? // If requested
+    let turnComplete: Bool?
+    let error: GeminiError? // Errors specific to content processing
+}
+
+struct ModelTurn: Decodable {
+    let role: String // Should be "model"
+    let parts: [Part]
+
+    struct Part: Decodable {
+        let text: String?
+        // let inlineData: InlineData? // For audio responses
+        // Add other part types if needed (e.g., executableCode)
+
+        // struct InlineData: Decodable {
+        //     let mimeType: String
+        //     let data: String // Base64 encoded
+        // }
+    }
+}
+
+// struct Transcription: Decodable {
+//     let text: String?
+// }
+
+struct UsageMetadata: Decodable { // Replaces GeminiLiveFinalMetricsMessage
+    let totalTokenCount: Int?
+    let promptTokenCount: Int?
+    // Add candidatesTokenCount, etc.
+}
+
+struct GoAway: Decodable {
+    let reason: String? // e.g., "SESSION_EXPIRED"
+    let message: String?
+}
+
+struct GeminiError: Decodable {
+    let code: Int?
+    let message: String
+    // Add details if provided
+}
+
+
 // MARK: - Delegate Protocol
 
 /// Delegate for receiving prompts from the Gemini Live API; methods are invoked on the main actor.
@@ -397,10 +468,83 @@ class GeminiAPIClient {
             print("Error decoding incoming message: \(error)")
         }
         */
-         // Placeholder: Forward raw message for now
-         DispatchQueue.main.async { [weak self] in
-             self?.delegate?.didReceivePrompt("Raw WS: \(text.prefix(100))")
-         }
+        guard let data = text.data(using: .utf8) else {
+            print("Error: Could not convert incoming text to data.")
+            return
+        }
+
+        do {
+            let decoder = JSONDecoder()
+            let serverMessage = try decoder.decode(BidiGenerateContentServerMessage.self, from: data)
+
+            // --- Handle different message types ---
+
+            // Check for Errors first
+            if let error = serverMessage.effectiveError {
+                print("Received Gemini API Error: \(error.code ?? 0) - \(error.message)")
+                DispatchQueue.main.async { [weak self] in
+                    self?.delegate?.didReceivePrompt("API Error: \(error.message)")
+                    // Consider disconnecting or specific error handling
+                }
+                // Potentially close connection or stop processing based on error type
+                 if error.code != nil { // Assume fatal errors have codes? Adjust as needed.
+                     self.ws?.close(code: .internalServerError)
+                 }
+                return // Stop processing this message if it's an error
+            }
+
+            // Setup Complete
+            if serverMessage.setupComplete != nil {
+                print("Gemini API Setup Complete.")
+                // Potentially set a flag like `isSetupComplete = true` if needed elsewhere
+            }
+
+            // Server Content (Model Response)
+            if let content = serverMessage.serverContent, let modelTurn = content.modelTurn {
+                // Aggregate text parts
+                let responseText = modelTurn.parts.compactMap { $0.text }.joined()
+                if !responseText.isEmpty {
+                    // Append to buffer or handle directly
+                    // For simplicity now, update delegate immediately if turn is complete or text exists
+                     print("Received model text: \(responseText)")
+                     DispatchQueue.main.async { [weak self] in
+                         self?.delegate?.didReceivePrompt(responseText)
+                     }
+                }
+                // Handle audio parts (inlineData) if needed
+                
+                if content.turnComplete == true {
+                    print("Model turn complete.")
+                    // Clear buffer, finalize response processing etc.
+                }
+            }
+
+            // Usage Metadata
+            if let metadata = serverMessage.usageMetadata {
+                print("Received Usage Metadata: Tokens - \(metadata.totalTokenCount ?? 0)")
+                // Handle final metrics
+            }
+
+            // Go Away (Session ending)
+            if let goAway = serverMessage.goAway {
+                print("Received Go Away: \(goAway.reason ?? "Unknown") - \(goAway.message ?? "No details")")
+                // Prepare for disconnection
+                DispatchQueue.main.async { [weak self] in
+                    self?.delegate?.didReceivePrompt("Session ending: \(goAway.message ?? goAway.reason ?? "")")
+                }
+                self.ws?.close(code: .goingAway)
+            }
+
+            // Handle other message types (ToolCall, SessionResumptionUpdate) if implemented
+
+        } catch {
+            print("Error decoding incoming WebSocket message: \(error)")
+            print("Raw message data: \(text)")
+            // Handle decoding error, maybe the structure is wrong or message is unexpected
+            DispatchQueue.main.async { [weak self] in
+                 self?.delegate?.didReceivePrompt("Error processing server message.")
+            }
+        }
     }
 
     private func handleWebSocketClose(result: Result<Void, Error>) {
@@ -421,8 +565,9 @@ class GeminiAPIClient {
     ///   - parts: The content parts to send.
     ///   - turnComplete: Whether this message completes the user's turn and expects a response. Defaults to `false`.
     private func sendContentMessage(_ parts: [BidiGenerateContentClientContent.Part], turnComplete: Bool = false) {
+         // **Strict Check:** Ensure websocket exists AND isConnected flag is true.
          guard let websocket = ws, isConnected else {
-             print("Cannot send content, WebSocket not connected.")
+             print("Attempted to send content, but WebSocket is not connected or ready.")
              return
          }
 
