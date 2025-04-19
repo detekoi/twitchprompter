@@ -12,27 +12,167 @@ enum GeminiLiveMessageType: String, Codable {
     case heartbeat = "heartbeat"
     case finalMetrics = "finalMetrics"
     case error = "error"
+// MARK: - API Message Structs (Matching Live API Spec)
+
+/// Wrapper to ensure only one top-level key per client message
+struct ClientMessageWrapper<T: Codable>: Codable {
+    let setup: T?
+    let clientContent: T?
+    // Add realtimeInput, toolResponse etc. as needed
+
+    init(setup: T) {
+        self.setup = setup
+        self.clientContent = nil
+    }
+
+    init(clientContent: T) {
+        self.setup = nil
+        self.clientContent = clientContent
+    }
+
+    // Add other initializers as needed
 }
 
-/// Message to initialize a Live API session
-struct GeminiLiveStartMessage: Codable {
-    let type: String = GeminiLiveMessageType.start.rawValue
-    let session: SessionConfig
-    
-    init(session: SessionConfig) {
-        self.session = session
+
+/// Setup message structure (BidiGenerateContentSetup)
+struct BidiGenerateContentSetup: Codable {
+    let model: String // Format: "models/gemini-2.0-flash-live-001"
+    let systemInstruction: Content? // Optional system prompt
+    let generationConfig: GenerationConfig? // Optional generation config
+    // Add tools, sessionResumption, etc. if needed
+
+    struct Content: Codable {
+        let parts: [Part]
+    }
+
+    struct Part: Codable {
+        let text: String
     }
     
-    struct SessionConfig: Codable {
-        let id: String
-        let model: String = "gemini-2.0-flash-live-001" // Use the Live API model
-        let system: String?
-        let audioConfig: AudioConfig?
-        // Add response modalities if needed, e.g., ["TEXT", "AUDIO"]
-        let responseModalities: [String]? = ["TEXT"] // Example: Request text responses
+    // Define GenerationConfig based on API spec if needed
+     struct GenerationConfig: Codable {
+         let responseModalities: [String]? // e.g., ["TEXT", "AUDIO"]
+         // Add temperature, topP, topK, maxOutputTokens etc. if needed
+     }
+}
 
-        struct AudioConfig: Codable {
-            let sampleRateHz: Int
+/// Client content message structure (BidiGenerateContentClientContent)
+struct BidiGenerateContentClientContent: Codable {
+    let turns: [Turn]
+    let turnComplete: Bool? // Optional, defaults to false if omitted? Check API spec.
+
+    struct Turn: Codable {
+        let role: String // "user" or "model"
+        let parts: [Part]
+    }
+
+    struct Part: Codable {
+        let text: String?
+        let inlineData: InlineData?
+        let audioData: AudioData?
+
+        // Initializers matching the old GeminiLiveSendContentMessage.ContentPart.Part
+        init(text: String) {
+            self.text = text
+            self.inlineData = nil
+            self.audioData = nil
+        }
+
+        init(imageData: Data) {
+            self.text = nil
+            self.inlineData = InlineData(
+                mimeType: "image/jpeg",
+                data: imageData.base64EncodedString()
+            )
+            self.audioData = nil
+        }
+
+        init(audioData data: Data) {
+            self.text = nil
+            self.inlineData = nil
+            self.audioData = AudioData(data: data.base64EncodedString())
+        }
+    }
+
+    struct InlineData: Codable {
+        let mimeType: String
+        let data: String // Base64-encoded data
+    }
+
+    struct AudioData: Codable {
+        let data: String // Base64-encoded audio data
+    }
+}
+
+
+// --- Old/Deprecated Structs (Can be removed later if fully replaced) ---
+
+/// Message component that can contain text or binary data
+struct GeminiMessagePart {
+    let text: String?
+    let inlineData: GeminiInlineData?
+
+    init(text: String) {
+        self.text = text
+        self.inlineData = nil
+    }
+
+    init(data: Data, mimeType: String) {
+        self.text = nil
+        self.inlineData = GeminiInlineData(mimeType: mimeType, data: data.base64EncodedString())
+    }
+}
+
+/// Base64 encoded data with MIME type
+struct GeminiInlineData {
+    let mimeType: String
+    let data: String // Base64 encoded data
+}
+
+// --- Structs for Receiving Messages (Keep as is for now) ---
+
+/// Model for received content
+struct GeminiLiveReceiveContentMessage: Codable {
+    let type: String // Keep type for initial decoding, but actual server messages might not have it
+    let content: Content?
+    let error: LiveError?
+    // TODO: Adapt this based on actual BidiGenerateContentServerMessage structure
+    // It likely won't have 'type'. It will have one of:
+    // setupComplete, serverContent, toolCall, toolCallCancellation, usageMetadata, goAway, sessionResumptionUpdate
+
+    struct Content: Codable {
+        let role: String
+        let parts: [Part]
+
+        struct Part: Codable {
+            let text: String?
+        }
+    }
+
+    struct LiveError: Codable { // This might correspond to an error within serverContent or a specific error message type
+        let code: Int
+        let message: String
+    }
+}
+
+/// Model for heartbeat responses (Likely not used in Live API)
+struct GeminiLiveHeartbeatMessage: Codable {
+    let type: String
+
+    init() {
+        self.type = GeminiLiveMessageType.heartbeat.rawValue
+    }
+}
+
+/// Final metrics from the session (Corresponds to UsageMetadata in Live API)
+struct GeminiLiveFinalMetricsMessage: Codable {
+    let type: String // Keep type for initial decoding?
+    let metrics: Metrics
+    // TODO: Adapt based on actual UsageMetadata structure
+
+    struct Metrics: Codable {
+        let totalTokenCount: Int
+        let promptTokenCount: Int
             let audioEncoding: String
             
             init(sampleRateHz: Int) {
@@ -307,15 +447,30 @@ class GeminiAPIClient {
             // model is set by default in the struct definition
             system: systemPrompt,
             audioConfig: nil // Add audio config if needed, e.g., .init(sampleRateHz: 16000)
-            // responseModalities is set by default
+            // responseModalities is set by default in the old struct, define explicitly here
         )
-        let startMessage = GeminiLiveStartMessage(session: sessionConfig)
+
+        // Create the BidiGenerateContentSetup message
+        let modelName = "models/gemini-2.0-flash-live-001" // Use the format specified in API docs
+        let systemInstruction = BidiGenerateContentSetup.Content(parts: [BidiGenerateContentSetup.Part(text: systemPrompt)])
+        let generationConfig = BidiGenerateContentSetup.GenerationConfig(responseModalities: ["TEXT"]) // Match old config
+
+        let setupPayload = BidiGenerateContentSetup(
+            model: modelName,
+            systemInstruction: systemInstruction,
+            generationConfig: generationConfig
+            // Add tools etc. here if needed
+        )
+
+        // Wrap the setup payload in the ClientMessageWrapper
+        let messageToSend = ClientMessageWrapper(setup: setupPayload)
 
         do {
             let encoder = JSONEncoder()
-            let data = try encoder.encode(startMessage)
+            // encoder.outputFormatting = .prettyPrinted // Optional: for debugging
+            let data = try encoder.encode(messageToSend)
             if let jsonString = String(data: data, encoding: .utf8) {
-                 print("Sending Start Message: \(jsonString)")
+                 print("Sending Setup Message: \(jsonString)")
                  websocket.send(jsonString)
             } else {
                  print("Error: Could not convert start message to JSON string")
@@ -389,23 +544,28 @@ class GeminiAPIClient {
          }
     }
 
-    // MARK: - Content Sending (Refactoring Needed)
-    
-    // TODO: Refactor this method to send content over WebSocket using GeminiLiveSendContentMessage
-    private func sendContentMessage(_ parts: [GeminiLiveSendContentMessage.ContentPart.Part]) {
+    // MARK: - Content Sending
+
+    private func sendContentMessage(_ parts: [BidiGenerateContentClientContent.Part]) {
          guard let websocket = ws, isConnected else {
              print("Cannot send content, WebSocket not connected.")
              return
          }
 
-         let contentPart = GeminiLiveSendContentMessage.ContentPart(parts: parts)
-         let message = GeminiLiveSendContentMessage(content: contentPart)
+         // Create the BidiGenerateContentClientContent message
+         let turn = BidiGenerateContentClientContent.Turn(role: "user", parts: parts)
+         // Set turnComplete to true to signal the model should respond now
+         let clientContentPayload = BidiGenerateContentClientContent(turns: [turn], turnComplete: true)
+
+         // Wrap the clientContent payload
+         let messageToSend = ClientMessageWrapper(clientContent: clientContentPayload)
 
          do {
              let encoder = JSONEncoder()
-             let data = try encoder.encode(message)
+             // encoder.outputFormatting = .prettyPrinted // Optional: for debugging
+             let data = try encoder.encode(messageToSend)
              if let jsonString = String(data: data, encoding: .utf8) {
-                 print("Sending Content Message: \(jsonString.prefix(200))...")
+                 print("Sending Client Content Message: \(jsonString.prefix(500))...") // Log more for debugging
                  websocket.send(jsonString)
              } else {
                  print("Error: Could not convert content message to JSON string")
@@ -430,9 +590,8 @@ class GeminiAPIClient {
             guard let self = self, !self.pendingFrames.isEmpty, self.isConnected else { return }
             // Take the most recent frame
             if let latestFrame = self.pendingFrames.last {
-                // Send just the latest frame using the Live API structure
-                // Note: GeminiMessagePart is for REST, need GeminiLiveSendContentMessage.ContentPart.Part
-                let part = GeminiLiveSendContentMessage.ContentPart.Part(imageData: latestFrame)
+                // Use the new BidiGenerateContentClientContent.Part structure
+                let part = BidiGenerateContentClientContent.Part(imageData: latestFrame)
                 self.sendContentMessage([part])
             }
             // Clear pending frames
@@ -444,9 +603,9 @@ class GeminiAPIClient {
         // Process audio data - ensure it's 16kHz 16-bit PCM for Live API
         // Send using the Live API structure
         // Note: GeminiMessagePart is for REST, need GeminiLiveSendContentMessage.ContentPart.Part
-        // Ensure responseModalities in SessionConfig includes "AUDIO" if you expect audio back
-        // Ensure audioConfig in SessionConfig is set if sending audio
-        let part = GeminiLiveSendContentMessage.ContentPart.Part(audioData: data)
+        // Ensure responseModalities in GenerationConfig includes "AUDIO" if you expect audio back
+        // Ensure audioConfig in GenerationConfig is set if sending audio (Need to add AudioConfig to BidiGenerateContentSetup.GenerationConfig if needed)
+        let part = BidiGenerateContentClientContent.Part(audioData: data)
         sendContentMessage([part])
         // Also consider sending a text part if needed, e.g.,
         // let textPart = GeminiLiveSendContentMessage.ContentPart.Part(text: "[Sending audio chunk]")
@@ -455,9 +614,8 @@ class GeminiAPIClient {
     
     func sendChatMessage(_ username: String, _ message: String) {
         let chatText = "\(username): \(message)"
-        // Send using the Live API structure
-        // Note: GeminiMessagePart is for REST, need GeminiLiveSendContentMessage.ContentPart.Part
-        let part = GeminiLiveSendContentMessage.ContentPart.Part(text: "Chat message: \(chatText)")
+        // Use the new BidiGenerateContentClientContent.Part structure
+        let part = BidiGenerateContentClientContent.Part(text: "Chat message: \(chatText)")
         sendContentMessage([part])
     }
 }
