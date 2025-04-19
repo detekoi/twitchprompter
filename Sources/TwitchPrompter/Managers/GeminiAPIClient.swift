@@ -2,379 +2,203 @@ import Foundation
 import WebSocketKit
 import NIO
 
-// MARK: - Message Models
-
-/// Live API message types
-enum GeminiLiveMessageType: String, Codable {
-    case start = "start"
-    case sendContent = "sendContent"
-    case receiveContent = "receiveContent"
-    case heartbeat = "heartbeat"
-    case finalMetrics = "finalMetrics"
-    case error = "error"
-} // Close GeminiLiveMessageType enum
-
-// MARK: - API Message Structs (Matching Live API Spec)
-
-/// Wrapper to ensure only one top-level key per client message
-struct ClientMessageWrapper<T: Codable>: Codable {
-    let setup: T?
-    let clientContent: T?
-    // Add realtimeInput, toolResponse etc. as needed
-
-    init(setup: T) {
-        self.setup = setup
-        self.clientContent = nil
-    }
-
-    init(clientContent: T) {
-        self.setup = nil
-        self.clientContent = clientContent
-    }
-
-    // Add other initializers as needed
-}
-
-
-/// Setup message structure (BidiGenerateContentSetup)
-struct BidiGenerateContentSetup: Codable {
-    let model: String // Format: "models/gemini-2.0-flash-live-001"
-    let systemInstruction: Content? // Optional system prompt
-    let generationConfig: GenerationConfig? // Optional generation config
-    // Add tools, sessionResumption, etc. if needed
-
-    struct Content: Codable {
-        let parts: [Part]
-    }
-
-    struct Part: Codable {
-        let text: String
-    }
-    
-    // Define GenerationConfig based on API spec if needed
-     struct GenerationConfig: Codable {
-         let responseModalities: [String]? // e.g., ["TEXT", "AUDIO"]
-         // Add temperature, topP, topK, maxOutputTokens etc. if needed
-     }
-}
-
-/// Client content message structure (BidiGenerateContentClientContent)
-struct BidiGenerateContentClientContent: Codable {
-    let turns: [Turn]
-    let turnComplete: Bool? // Optional, defaults to false if omitted? Check API spec.
-
-    struct Turn: Codable {
-        let role: String // "user" or "model"
-        let parts: [Part]
-    }
-
-    struct Part: Codable {
-        let text: String?
-        let inlineData: InlineData?
-        let audioData: AudioData?
-
-        // Initializers matching the old GeminiLiveSendContentMessage.ContentPart.Part
-        init(text: String) {
-            self.text = text
-            self.inlineData = nil
-            self.audioData = nil
-        }
-
-        init(imageData: Data) {
-            self.text = nil
-            self.inlineData = InlineData(
-                mimeType: "image/jpeg",
-                data: imageData.base64EncodedString()
-            )
-            self.audioData = nil
-        }
-
-        init(audioData data: Data) {
-            self.text = nil
-            self.inlineData = nil
-            self.audioData = AudioData(data: data.base64EncodedString())
-        }
-    }
-
-    struct InlineData: Codable {
-        let mimeType: String
-        let data: String // Base64-encoded data
-    }
-
-    struct AudioData: Codable {
-        let data: String // Base64-encoded audio data
-    }
-}
-
-
-// --- Old/Deprecated Structs (Can be removed later if fully replaced) ---
-
-/// Message component that can contain text or binary data
-struct GeminiMessagePart {
-    let text: String?
-    let inlineData: GeminiInlineData?
-
-    init(text: String) {
-        self.text = text
-        self.inlineData = nil
-    }
-
-    init(data: Data, mimeType: String) {
-        self.text = nil
-        self.inlineData = GeminiInlineData(mimeType: mimeType, data: data.base64EncodedString())
-    }
-}
-
-/// Base64 encoded data with MIME type
-struct GeminiInlineData {
-    let mimeType: String
-    let data: String // Base64 encoded data
-}
-
-// --- Structs for Receiving Messages (Keep as is for now) ---
-
-/// Model for received content
-struct GeminiLiveReceiveContentMessage: Codable {
-    let type: String // Keep type for initial decoding, but actual server messages might not have it
-    let content: Content?
-    let error: LiveError?
-    // TODO: Adapt this based on actual BidiGenerateContentServerMessage structure
-    // It likely won't have 'type'. It will have one of:
-    // setupComplete, serverContent, toolCall, toolCallCancellation, usageMetadata, goAway, sessionResumptionUpdate
-
-    struct Content: Codable {
-        let role: String
-        let parts: [Part]
-
-        struct Part: Codable {
-            let text: String?
-        }
-    }
-
-    struct LiveError: Codable { // This might correspond to an error within serverContent or a specific error message type
-        let code: Int
-        let message: String
-    }
-}
-
-/// Model for heartbeat responses (Likely not used in Live API)
-struct GeminiLiveHeartbeatMessage: Codable {
-    let type: String
-
-    init() {
-        self.type = GeminiLiveMessageType.heartbeat.rawValue
-    }
-}
-
-/// Final metrics from the session (Corresponds to UsageMetadata in Live API)
-struct GeminiLiveFinalMetricsMessage: Codable {
-    let type: String // Keep type for initial decoding?
-    let metrics: Metrics
-    // TODO: Adapt based on actual UsageMetadata structure
-
-    struct Metrics: Codable {
-        let totalTokenCount: Int
-        let promptTokenCount: Int
-        // TODO: Add other relevant metric fields based on actual API response if needed
-    }
-} // Close GeminiLiveFinalMetricsMessage struct
-
-
-// MARK: - Server Message Structures (Based on Live API Spec Inference)
-
-/// Represents a message received from the server. Uses specific fields to determine message type.
-struct BidiGenerateContentServerMessage: Decodable {
-    let setupComplete: SetupComplete?
-    let serverContent: ServerContent?
-    // let toolCall: ToolCall? // Define if using tools
-    // let toolCallCancellation: ToolCallCancellation? // Define if using tools
-    let usageMetadata: UsageMetadata? // Corresponds to old FinalMetrics
-    let goAway: GoAway?
-    // let sessionResumptionUpdate: SessionResumptionUpdate? // Define if using session resumption
-    let error: GeminiError? // General error structure
-
-    // Check for specific error structure within serverContent as well
-    var effectiveError: GeminiError? {
-        return self.error ?? self.serverContent?.error
-    }
-}
-
-struct SetupComplete: Decodable {
-    // Contains confirmation details, potentially session ID etc.
-    // For now, its presence indicates successful setup.
-}
-
-struct ServerContent: Decodable {
-    let modelTurn: ModelTurn?
-    // let inputTranscription: Transcription? // If requested
-    // let outputTranscription: Transcription? // If requested
-    let turnComplete: Bool?
-    let error: GeminiError? // Errors specific to content processing
-}
-
-struct ModelTurn: Decodable {
-    let role: String // Should be "model"
-    let parts: [Part]
-
-    struct Part: Decodable {
-        let text: String?
-        // let inlineData: InlineData? // For audio responses
-        // Add other part types if needed (e.g., executableCode)
-
-        // struct InlineData: Decodable {
-        //     let mimeType: String
-        //     let data: String // Base64 encoded
-        // }
-    }
-}
-
-// struct Transcription: Decodable {
-//     let text: String?
-// }
-
-struct UsageMetadata: Decodable { // Replaces GeminiLiveFinalMetricsMessage
-    let totalTokenCount: Int?
-    let promptTokenCount: Int?
-    // Add candidatesTokenCount, etc.
-}
-
-struct GoAway: Decodable {
-    let reason: String? // e.g., "SESSION_EXPIRED"
-    let message: String?
-}
-
-struct GeminiError: Decodable {
-    let code: Int?
-    let message: String
-    // Add details if provided
-}
-
-
-// MARK: - Delegate Protocol
-
-/// Delegate for receiving prompts from the Gemini Live API; methods are invoked on the main actor.
+/// Delegate for receiving prompts from the Gemini Live API
 @MainActor
 protocol GeminiClientDelegate: AnyObject {
-    /// Called when the Gemini API returns a new prompt.
     func didReceivePrompt(_ prompt: String)
 }
 
-// MARK: - Client Implementation
+/// Live API message types
+enum MessageType: String {
+    case setup = "setup"
+    case clientContent = "clientContent"
+    case setupComplete = "setupComplete"
+    case serverContent = "serverContent"
+    case error = "error"
+}
 
+/// Gemini Live API client implementation
 class GeminiAPIClient {
+    // MARK: - Properties
+    
     weak var delegate: GeminiClientDelegate?
     let apiKey: String
-    // Using the specific WebSocket endpoint from the Google AI Live API documentation
-    private let liveAPIEndpoint = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
-
-    private var ws: WebSocket?
-    private var elg: EventLoopGroup? = MultiThreadedEventLoopGroup.singleton // Use shared group
-    private var isConnected = false
-    private var sessionId = UUID().uuidString
-    private var contentBuffer = [String]()
-    private var pendingFrames = [Data]()
-    private var heartbeatTimer: Timer?
+    private let endpoint = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
     
-    // Queue for processing frames to avoid overloading the API
+    private var ws: WebSocket?
+    private var elg: EventLoopGroup?
+    private var isConnected = false
+    private var pendingFrames = [Data]()
+    private var reconnectAttempts = 0
+    private let maxReconnectAttempts = 3
+    
+    // Queue for processing frames
     private let processingQueue = DispatchQueue(label: "com.twitchprompter.gemini.processing")
-    private let processingInterval: TimeInterval = 3.0 // Process frames every 3 seconds
+    private let processingInterval: TimeInterval = 3.0
     private var processingTimer: Timer?
+    
+    // MARK: - Initialization
     
     init(apiKey: String, delegate: GeminiClientDelegate) {
         self.apiKey = apiKey
         self.delegate = delegate
     }
     
-    // MARK: - Connection Management
+    // MARK: - Public Methods
     
     func connect() {
         guard !isConnected else { return }
         
-        // Ensure EventLoopGroup exists
-        guard let eventLoopGroup = MultiThreadedEventLoopGroup.singleton as? EventLoopGroup else {
-             print("Error: Could not get EventLoopGroup singleton.")
-             // Handle error appropriately, maybe notify delegate
-             DispatchQueue.main.async { [weak self] in
-                 self?.delegate?.didReceivePrompt("Error: Could not initialize connection.")
-             }
-             return
-         }
-        self.elg = eventLoopGroup
-
-        // Create a new session ID
-        sessionId = UUID().uuidString
-        // Construct Google AI Live API URL with API key
-        let wsURLString = "\(liveAPIEndpoint)?key=\(apiKey)"
-
-        guard let wsURL = URL(string: wsURLString) else {
-            print("Error: Invalid WebSocket URL (Google AI Live): \(wsURLString)")
+        // If we've tried too many times, let the user know
+        if reconnectAttempts >= maxReconnectAttempts {
             DispatchQueue.main.async { [weak self] in
-                self?.delegate?.didReceivePrompt("Error: Invalid API endpoint configuration.")
+                self?.delegate?.didReceivePrompt("Multiple connection attempts failed. Please check API key and connectivity.")
             }
+        }
+        
+        // Create event loop group
+        elg = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        guard let elg = elg else { return }
+        
+        // Construct WebSocket URL with API key
+        let wsURLString = "\(endpoint)?key=\(apiKey)"
+        guard let wsURL = URL(string: wsURLString) else {
+            print("Invalid WebSocket URL")
             return
         }
-
+        
         print("Connecting to WebSocket: \(wsURLString)")
-
-        // Initiate WebSocket connection
-        let connectionFuture = WebSocket.connect(to: wsURL, on: eventLoopGroup) { [weak self] websocket in
+        
+        // Connect to WebSocket - no timeout configuration, using default
+        WebSocket.connect(to: wsURL, on: elg) { [weak self] ws in
             guard let self = self else { return }
-            self.ws = websocket
+            
+            self.ws = ws
             self.isConnected = true
+            self.reconnectAttempts = 0
             print("WebSocket connected successfully.")
-
-            // Send the start message
-            self.sendStartMessage()
-
-            // Set up message handling
-            websocket.onText { ws, text in
-                self.handleIncomingMessage(text)
-            }
-
-            // Set up close handling
-            websocket.onClose.whenComplete { [weak self] result in
-                self?.handleWebSocketClose(result: result)
+            
+            // Send initial setup message
+            self.sendSetupMessage()
+            
+            // Configure message handlers
+            ws.onText { [weak self] _, text in
+                print("Received text message: \(text.prefix(100))...")
+                self?.handleMessage(text)
             }
             
-            // Notify successful connection
-             DispatchQueue.main.async { [weak self] in
-                 self?.delegate?.didReceivePrompt("Connected to Gemini Live API")
-             }
-
-            // Start the processing timer for frames (if needed for Live API)
-            // Consider if frame processing logic needs adjustment for WebSocket streaming
+            ws.onBinary { [weak self] _, buffer in
+                print("Received binary data: \(buffer.readableBytes) bytes")
+                
+                // Read binary data and convert to string
+                var data = Data()
+                let bytes = buffer.readableBytesView
+                data.append(contentsOf: bytes)
+                
+                if let text = String(data: data, encoding: .utf8) {
+                    print("Binary data as text: \(text.prefix(100))...")
+                    self?.handleMessage(text)
+                } else {
+                    print("Could not decode binary data as UTF-8 text")
+                }
+            }
+            
+            ws.onPing { _, _ in
+                print("Received ping")
+            }
+            
+            ws.onPong { _, _ in
+                print("Received pong")
+            }
+            
+            // WebSocketKit doesn't have onError
+            
+            ws.onClose.whenComplete { [weak self] result in
+                guard let self = self else { return }
+                
+                print("WebSocket closed: \(result)")
+                self.isConnected = false
+                self.ws = nil
+                self.stopProcessingTimer()
+                
+                DispatchQueue.main.async {
+                    self.delegate?.didReceivePrompt("Disconnected from Gemini API. Attempting to reconnect...")
+                }
+                
+                // Try to reconnect after a delay
+                let delay = min(pow(2.0, Double(self.reconnectAttempts)), 30.0)
+                self.reconnectAttempts += 1
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    guard let self = self, !self.isConnected else { return }
+                    self.connect()
+                }
+            }
+            
+            // Start processing frames
             self.startProcessingTimer()
-        }
-
-        // Handle connection errors
-        connectionFuture.whenFailure { [weak self] error in
+            
+            // Notify successful connection
+            DispatchQueue.main.async {
+                self.delegate?.didReceivePrompt("Connected to Gemini Live API")
+            }
+        }.whenFailure { [weak self] error in
+            guard let self = self else { return }
+            
             print("WebSocket connection failed: \(error)")
-            self?.isConnected = false
-            // Notify delegate about the failure
-            DispatchQueue.main.async { [weak self] in
-                self?.delegate?.didReceivePrompt("Error connecting to Gemini Live API: \(error.localizedDescription)")
+            self.isConnected = false
+            self.reconnectAttempts += 1
+            
+            // Notify delegate and retry
+            DispatchQueue.main.async {
+                let delay = min(pow(2.0, Double(self.reconnectAttempts)), 30.0)
+                self.delegate?.didReceivePrompt("Error connecting to Gemini API: \(error.localizedDescription). Retrying in \(Int(delay)) seconds...")
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    guard let self = self, !self.isConnected else { return }
+                    self.connect()
+                }
             }
         }
     }
     
     func disconnect() {
-        stopProcessingTimer()
-        isConnected = false
+        // Close the WebSocket connection
+        if let ws = ws {
+            ws.close().whenComplete { _ in
+                print("WebSocket closed by disconnect()")
+            }
+        }
         
-        // Notify disconnection
+        isConnected = false
+        stopProcessingTimer()
+        
         DispatchQueue.main.async { [weak self] in
             self?.delegate?.didReceivePrompt("Disconnected from Gemini API")
         }
     }
     
-    // No heartbeat needed for HTTP-based streaming
+    func sendVideoFrame(_ data: Data) {
+        processingQueue.async { [weak self] in
+            self?.pendingFrames.append(data)
+        }
+    }
     
-    // MARK: - Processing Timer
+    func sendAudio(_ data: Data) {
+        // Currently, we'll just send a placeholder message
+        sendTextMessage("[Audio input received]", turnComplete: false)
+    }
+    
+    func sendChatMessage(_ username: String, _ message: String) {
+        let chatText = "\(username): \(message)"
+        sendTextMessage("Chat message: \(chatText)", turnComplete: true)
+    }
+    
+    // MARK: - Private Methods
     
     private func startProcessingTimer() {
         processingTimer = Timer.scheduledTimer(withTimeInterval: processingInterval, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            self.processPendingFrames()
+            self?.processPendingFrames()
         }
     }
     
@@ -382,264 +206,191 @@ class GeminiAPIClient {
         processingTimer?.invalidate()
         processingTimer = nil
     }
-    // MARK: - WebSocket Message Handling
-
-    private func sendStartMessage() {
-        guard let websocket = ws else { return }
-
-        // System prompt - Define it here or pass it during init
-        let systemPrompt = "You are an assistant providing streamers with live prompts and content ideas based on their stream. Keep your suggestions concise, relevant to what's happening on screen, and engaging for viewers. Respond within 1-2 sentences and make your suggestions helpful for the streamer without being disruptive."
-
-
-        // Create the BidiGenerateContentSetup message
-        let modelName = "models/gemini-2.0-flash-live-preview-04-09" // Use the model specified in Live API docs
-        let systemInstruction = BidiGenerateContentSetup.Content(parts: [BidiGenerateContentSetup.Part(text: systemPrompt)])
-        let generationConfig = BidiGenerateContentSetup.GenerationConfig(responseModalities: ["TEXT"]) // Match old config
-
-        let setupPayload = BidiGenerateContentSetup(
-            model: modelName,
-            systemInstruction: systemInstruction,
-            generationConfig: generationConfig
-            // Add tools etc. here if needed
-        )
-
-        // Wrap the setup payload in the ClientMessageWrapper
-        let messageToSend = ClientMessageWrapper(setup: setupPayload)
-
-        do {
-            let encoder = JSONEncoder()
-            // encoder.outputFormatting = .prettyPrinted // Optional: for debugging
-            let data = try encoder.encode(messageToSend)
-            if let jsonString = String(data: data, encoding: .utf8) {
-                 print("Sending Setup Message: \(jsonString)")
-                 websocket.send(jsonString)
-            } else {
-                 print("Error: Could not convert start message to JSON string")
-            }
-        } catch {
-            print("Error encoding start message: \(error)")
-        }
-    }
-
-    private func handleIncomingMessage(_ text: String) {
-        print("Received WebSocket message: \(text.prefix(200))...")
-        // TODO: Decode the message based on its 'type' field (receiveContent, heartbeat, error, etc.)
-        // and call appropriate delegate methods or update internal state.
-        // Example structure:
-        /*
-        guard let data = text.data(using: .utf8) else { return }
-        do {
-            let decoder = JSONDecoder()
-            // Try decoding different message types based on a common field like 'type'
-            if let genericMessage = try? decoder.decode([String: String].self, from: data),
-               let typeString = genericMessage["type"],
-               let type = GeminiLiveMessageType(rawValue: typeString) {
-
-                switch type {
-                case .receiveContent:
-                    let message = try decoder.decode(GeminiLiveReceiveContentMessage.self, from: data)
-                    // Process message.content or message.error
-                    if let content = message.content, let text = content.parts.first?.text {
-                         DispatchQueue.main.async { [weak self] in
-                             self?.delegate?.didReceivePrompt(text)
-                         }
-                    } else if let error = message.error {
-                         print("Received Live API Error: \(error.code) - \(error.message)")
-                         DispatchQueue.main.async { [weak self] in
-                             self?.delegate?.didReceivePrompt("Live API Error: \(error.message)")
-                         }
-                    }
-                case .heartbeat:
-                    // Handle heartbeat if necessary (e.g., respond if required by API)
-                    print("Received Heartbeat")
-                case .finalMetrics:
-                    let message = try decoder.decode(GeminiLiveFinalMetricsMessage.self, from: data)
-                    print("Received Final Metrics: \(message.metrics)")
-                case .error:
-                     // This might overlap with receiveContent.error, check API spec
-                     print("Received explicit Error message type")
-                default:
-                    print("Received unhandled message type: \(typeString)")
-                }
-            } else {
-                 print("Could not decode message type from: \(text)")
-            }
-        } catch {
-            print("Error decoding incoming message: \(error)")
-        }
-        */
-        guard let data = text.data(using: .utf8) else {
-            print("Error: Could not convert incoming text to data.")
-            return
-        }
-
-        do {
-            let decoder = JSONDecoder()
-            let serverMessage = try decoder.decode(BidiGenerateContentServerMessage.self, from: data)
-
-            // --- Handle different message types ---
-
-            // Check for Errors first
-            if let error = serverMessage.effectiveError {
-                print("Received Gemini API Error: \(error.code ?? 0) - \(error.message)")
-                DispatchQueue.main.async { [weak self] in
-                    self?.delegate?.didReceivePrompt("API Error: \(error.message)")
-                    // Consider disconnecting or specific error handling
-                }
-                // Potentially close connection or stop processing based on error type
-                 if error.code != nil { // Assume fatal errors have codes? Adjust as needed.
-                     // Use an appropriate WebSocketErrorCode
-                     self.ws?.close(code: .unexpectedServerError)
-                 }
-                return // Stop processing this message if it's an error
-            }
-
-            // Setup Complete
-            if serverMessage.setupComplete != nil {
-                print("Gemini API Setup Complete.")
-                // Potentially set a flag like `isSetupComplete = true` if needed elsewhere
-            }
-
-            // Server Content (Model Response)
-            if let content = serverMessage.serverContent, let modelTurn = content.modelTurn {
-                // Aggregate text parts
-                let responseText = modelTurn.parts.compactMap { $0.text }.joined()
-                if !responseText.isEmpty {
-                    // Append to buffer or handle directly
-                    // For simplicity now, update delegate immediately if turn is complete or text exists
-                     print("Received model text: \(responseText)")
-                     DispatchQueue.main.async { [weak self] in
-                         self?.delegate?.didReceivePrompt(responseText)
-                     }
-                }
-                // Handle audio parts (inlineData) if needed
-                
-                if content.turnComplete == true {
-                    print("Model turn complete.")
-                    // Clear buffer, finalize response processing etc.
-                }
-            }
-
-            // Usage Metadata
-            if let metadata = serverMessage.usageMetadata {
-                print("Received Usage Metadata: Tokens - \(metadata.totalTokenCount ?? 0)")
-                // Handle final metrics
-            }
-
-            // Go Away (Session ending)
-            if let goAway = serverMessage.goAway {
-                print("Received Go Away: \(goAway.reason ?? "Unknown") - \(goAway.message ?? "No details")")
-                // Prepare for disconnection
-                DispatchQueue.main.async { [weak self] in
-                    self?.delegate?.didReceivePrompt("Session ending: \(goAway.message ?? goAway.reason ?? "")")
-                }
-                self.ws?.close(code: .goingAway)
-            }
-
-            // Handle other message types (ToolCall, SessionResumptionUpdate) if implemented
-
-        } catch {
-            print("Error decoding incoming WebSocket message: \(error)")
-            print("Raw message data: \(text)")
-            // Handle decoding error, maybe the structure is wrong or message is unexpected
-            DispatchQueue.main.async { [weak self] in
-                 self?.delegate?.didReceivePrompt("Error processing server message.")
-            }
-        }
-    }
-
-    private func handleWebSocketClose(result: Result<Void, Error>) {
-         print("WebSocket connection closed: \(result)")
-         isConnected = false
-         ws = nil
-         stopProcessingTimer() // Stop processing frames on disconnect
-         // Optionally attempt reconnection or notify delegate
-         DispatchQueue.main.async { [weak self] in
-             self?.delegate?.didReceivePrompt("Disconnected from Gemini Live API")
-         }
-    }
-
-    // MARK: - Content Sending
-
-    /// Sends content parts to the Gemini API.
-    /// - Parameters:
-    ///   - parts: The content parts to send.
-    ///   - turnComplete: Whether this message completes the user's turn and expects a response. Defaults to `false`.
-    private func sendContentMessage(_ parts: [BidiGenerateContentClientContent.Part], turnComplete: Bool = false) {
-         // **Strict Check:** Ensure websocket exists AND isConnected flag is true.
-         guard let websocket = ws, isConnected else {
-             print("Attempted to send content, but WebSocket is not connected or ready.")
-             return
-         }
-
-         // Create the BidiGenerateContentClientContent message
-         let turn = BidiGenerateContentClientContent.Turn(role: "user", parts: parts)
-         // Set turnComplete based on the parameter. false for streaming, true when expecting a reply.
-         let clientContentPayload = BidiGenerateContentClientContent(turns: [turn], turnComplete: turnComplete)
-
-         // Wrap the clientContent payload
-         let messageToSend = ClientMessageWrapper(clientContent: clientContentPayload)
-
-         do {
-             let encoder = JSONEncoder()
-             // encoder.outputFormatting = .prettyPrinted // Optional: for debugging
-             let data = try encoder.encode(messageToSend)
-             if let jsonString = String(data: data, encoding: .utf8) {
-                 print("Sending Client Content Message: \(jsonString.prefix(500))...") // Log more for debugging
-                 websocket.send(jsonString)
-             } else {
-                 print("Error: Could not convert content message to JSON string")
-             }
-         } catch {
-             print("Error encoding content message: \(error)")
-         }
-    }
-    
-    // MARK: - Public Methods
-    
-    func sendVideoFrame(_ data: Data) {
-        // Add to pending frames instead of sending immediately
-        processingQueue.async { [weak self] in
-            guard let self = self else { return }
-            self.pendingFrames.append(data)
-        }
-    }
     
     private func processPendingFrames() {
         processingQueue.async { [weak self] in
             guard let self = self, !self.pendingFrames.isEmpty, self.isConnected else { return }
-            // Take the most recent frame
-            // Take the most recent frame
+            
+            // Use only the most recent frame
             if let latestFrame = self.pendingFrames.last {
-                // Use the new BidiGenerateContentClientContent.Part structure
-                let part = BidiGenerateContentClientContent.Part(imageData: latestFrame)
-                // Send video frame data without marking the turn as complete
-                self.sendContentMessage([part], turnComplete: false)
+                self.sendImageMessage(latestFrame)
             }
-            // Clear pending frames after processing
+            
             self.pendingFrames.removeAll()
         }
     }
     
-    func sendAudio(_ data: Data) {
-        // Process audio data - ensure it's 16kHz 16-bit PCM for Live API
-        // Send using the Live API structure
-        // Note: GeminiMessagePart is for REST, need GeminiLiveSendContentMessage.ContentPart.Part
-        // Ensure responseModalities in GenerationConfig includes "AUDIO" if you expect audio back
-        // Ensure audioConfig in GenerationConfig is set if sending audio (Need to add AudioConfig to BidiGenerateContentSetup.GenerationConfig if needed)
-        let part = BidiGenerateContentClientContent.Part(audioData: data)
-        // Send audio data without marking the turn as complete
-        sendContentMessage([part], turnComplete: false)
-        // Also consider sending a text part if needed, e.g.,
-        // let textPart = BidiGenerateContentClientContent.Part(text: "[Sending audio chunk]")
-        // sendContentMessage([part, textPart], turnComplete: false) // Still false if just accompanying audio
+    private func sendSetupMessage() {
+        guard let ws = ws else { return }
+        
+        // System prompt for streamers
+        let systemPrompt = "You are an assistant providing streamers with live prompts and content ideas based on their stream. Keep your suggestions concise, relevant to what's happening on screen, and engaging for viewers. Respond within 1-2 sentences and make your suggestions helpful for the streamer without being disruptive."
+        
+        // Create setup message
+        let setupMessage: [String: Any] = [
+            "setup": [
+                "model": "models/gemini-2.0-flash-live-001",
+                "generationConfig": [
+                    "responseModalities": ["TEXT"]
+                ],
+                "systemInstruction": [
+                    "parts": [
+                        ["text": systemPrompt]
+                    ]
+                ]
+            ]
+        ]
+        
+        do {
+            let data = try JSONSerialization.data(withJSONObject: setupMessage)
+            if let json = String(data: data, encoding: .utf8) {
+                print("Sending Setup Message: \(json)")
+                ws.send(json)
+            }
+        } catch {
+            print("Error encoding setup message: \(error)")
+        }
     }
     
-    func sendChatMessage(_ username: String, _ message: String) {
-        let chatText = "\(username): \(message)"
-        // Use the new BidiGenerateContentClientContent.Part structure
-        let part = BidiGenerateContentClientContent.Part(text: "Chat message: \(chatText)")
-        // Send chat message and mark the turn as complete to get a response
-        sendContentMessage([part], turnComplete: true)
+    private func sendTextMessage(_ text: String, turnComplete: Bool = false) {
+        guard let ws = ws, isConnected else {
+            print("Attempted to send text, but WebSocket is not connected")
+            return
+        }
+        
+        // Create client content message with text
+        let message: [String: Any] = [
+            "clientContent": [
+                "turns": [
+                    [
+                        "role": "user",
+                        "parts": [
+                            ["text": text]
+                        ]
+                    ]
+                ],
+                "turnComplete": turnComplete
+            ]
+        ]
+        
+        do {
+            let data = try JSONSerialization.data(withJSONObject: message)
+            if let json = String(data: data, encoding: .utf8) {
+                print("Sending Text Message: \(json.prefix(100))...")
+                ws.send(json)
+            }
+        } catch {
+            print("Error encoding text message: \(error)")
+        }
+    }
+    
+    private func sendImageMessage(_ imageData: Data) {
+        guard let ws = ws, isConnected else {
+            print("Attempted to send image, but WebSocket is not connected")
+            return
+        }
+        
+        // Create client content message with image
+        let message: [String: Any] = [
+            "clientContent": [
+                "turns": [
+                    [
+                        "role": "user",
+                        "parts": [
+                            [
+                                "inlineData": [
+                                    "mimeType": "image/jpeg",
+                                    "data": imageData.base64EncodedString()
+                                ]
+                            ]
+                        ]
+                    ]
+                ],
+                "turnComplete": true
+            ]
+        ]
+        
+        do {
+            let data = try JSONSerialization.data(withJSONObject: message)
+            if let json = String(data: data, encoding: .utf8) {
+                print("Sending Image Message (truncated): \(json.prefix(100))...")
+                ws.send(json)
+            }
+        } catch {
+            print("Error encoding image message: \(error)")
+        }
+    }
+    
+    private func handleMessage(_ text: String) {
+        print("Handling message: \(text)")
+        
+        guard let data = text.data(using: .utf8) else {
+            print("Could not convert message to data")
+            return
+        }
+        
+        // Try to parse as generic JSON
+        do {
+            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                print("Message keys: \(json.keys.joined(separator: ", "))")
+                
+                // Check for setup complete
+                if json["setupComplete"] != nil {
+                    print("✅ Setup complete confirmed")
+                    DispatchQueue.main.async { [weak self] in
+                        self?.delegate?.didReceivePrompt("Gemini Live API connected successfully")
+                    }
+                    return
+                }
+                
+                // Check for error
+                if let error = json["error"] as? [String: Any] {
+                    let code = error["code"] as? Int
+                    let message = error["message"] as? String
+                    print("⚠️ Error: code=\(code ?? 0), message=\(message ?? "unknown")")
+                    
+                    DispatchQueue.main.async { [weak self] in
+                        self?.delegate?.didReceivePrompt("API Error: \(message ?? "Unknown error")")
+                    }
+                    return
+                }
+                
+                // Check for server content (response)
+                if let content = json["serverContent"] as? [String: Any] {
+                    print("Found serverContent")
+                    
+                    // Pretty print content for debugging
+                    if let contentData = try? JSONSerialization.data(withJSONObject: content, options: .prettyPrinted),
+                       let prettyContent = String(data: contentData, encoding: .utf8) {
+                        print("Content: \(prettyContent)")
+                    }
+                    
+                    if let modelTurn = content["modelTurn"] as? [String: Any],
+                       let parts = modelTurn["parts"] as? [[String: Any]] {
+                        
+                        // Extract text from all parts
+                        let texts = parts.compactMap { part in
+                            part["text"] as? String
+                        }
+                        
+                        let responseText = texts.joined()
+                        if !responseText.isEmpty {
+                            print("📝 Received response: \(responseText)")
+                            DispatchQueue.main.async { [weak self] in
+                                self?.delegate?.didReceivePrompt(responseText)
+                            }
+                        } else {
+                            print("Response parts contained no text")
+                        }
+                    } else {
+                        print("Could not find modelTurn or parts in serverContent")
+                    }
+                }
+            } else {
+                print("Message is not valid JSON")
+            }
+        } catch {
+            print("JSON parsing error: \(error)")
+        }
     }
 }
