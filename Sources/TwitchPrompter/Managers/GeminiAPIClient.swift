@@ -177,9 +177,8 @@ class GeminiAPIClient {
     weak var delegate: GeminiClientDelegate?
     let apiKey: String // Keep API key for now, but Vertex AI usually uses ADC.
     // Switching to Vertex AI endpoint structure based on documentation.
-    // Replace YOUR_PROJECT_ID and YOUR_REGION with actual values.
-    private let vertexRegion = "YOUR_REGION" // e.g., "us-central1"
-    private let vertexProjectID = "YOUR_PROJECT_ID"
+    private let vertexRegion = "us-central1"
+    private let vertexProjectID = "ai-social-prompter"
     private var liveAPIEndpoint: String {
         // Note: Vertex AI uses v1beta1 for this API according to Python SDK example
         // Note: Model ID might need adjustment (e.g., gemini-2.0-flash-live-preview-04-09)
