@@ -40,7 +40,7 @@ A macOS application built in Swift using SwiftUI that captures screen, audio, an
 4. Click **Stop Streaming** to end the capture.
 
 ## Development
-Build and run commands are maintained in [CLAUDE.md](CLAUDE.md):
+Build and run commands:
 ```bash
 # Build the project
 swift build
@@ -51,7 +51,6 @@ swift package clean
 # Run tests (if any)
 swift test
 ```
-【F:CLAUDE.md†L5-L9】
 
 ## Project Structure
 Follows the standard Swift Package Manager layout:
@@ -68,10 +67,6 @@ Sources/
         ├── ScreenCaptureManager.swift
         └── GeminiAPIClient.swift
 ```
-【F:CLAUDE.md†L23-L25】【F:Package.swift†L5-L15】
-
-## Coding Guidelines
-See [CLAUDE.md](CLAUDE.md) for coding style and contribution guidelines.
 
 ## License
 This project is licensed under the BSD 2-Clause "Simplified" License - see the [LICENSE](LICENSE) file for details.
