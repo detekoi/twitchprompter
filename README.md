@@ -10,11 +10,11 @@ A macOS application built in Swift using SwiftUI that captures screen, audio, an
 - Extensible architecture using SwiftUI, Combine, and Swift Package Manager.
 
 ## Requirements
-- Swift 5.7 or later 【F:Package.swift†L1】
-- macOS 13.0 (Ventura) or later 【F:Package.swift†L7】
+- Swift 5.7 or later
+- macOS 13.0 (Ventura) or later
 - Xcode 14.0 or later
-- A Gemini API key.
-- A Twitch channel name.
+- A Gemini API key
+- A Twitch channel name
 
 ## Installation
 1. Clone the repository:
